@@ -1,0 +1,822 @@
+---
+// alisokni.com/moodboard
+// Reads everything in public/references (including any folders inside it) at build time and lists it in the tray.
+import fs from "node:fs";
+import path from "node:path";
+
+const dir = path.join(process.cwd(), "public", "references");
+const kinds = {
+  image: /\.(png|jpe?g|gif|webp|avif|svg)$/i,
+  video: /\.(mp4|webm|mov|m4v)$/i,
+  audio: /\.(mp3|wav|m4a|aac|ogg|flac)$/i,
+};
+
+// walk the folder and every folder inside it
+function walk(d, rel) {
+  return fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+    if (e.name.startsWith(".")) return [];
+    const r = rel ? rel + "/" + e.name : e.name;
+    if (e.isDirectory()) return walk(path.join(d, e.name), r);
+    return [r];
+  });
+}
+
+let refs = [];
+try {
+  refs = walk(dir, "")
+    .map((r) => {
+      const name = r.split("/").pop();
+      const kind = Object.keys(kinds).find((k) => kinds[k].test(name));
+      return kind ? { kind, name, path: r, src: "/references/" + r.split("/").map(encodeURIComponent).join("/") } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.path.localeCompare(b.path));
+} catch (e) {
+  refs = [];
+}
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="icon" type="image/png" href="/images/prototype.PNG" />
+    <link rel="apple-touch-icon" href="/images/prototype.PNG" />
+    <link rel="preload" href="/fonts/NHaasGroteskDSPro-65Md.otf" as="font" type="font/otf" crossorigin />
+    <title>ali — moodboard</title>
+  </head>
+  <body>
+    <header class="bar">
+      <a class="home" href="/">ali</a>
+      <span class="count" id="count"></span>
+      <div class="actions">
+        <button class="btn" id="addText" type="button">+ text</button>
+        <button class="btn" id="addFile" type="button">+ file</button>
+        <button class="btn" id="clearBoard" type="button">clear</button>
+      </div>
+      <input type="file" id="fileInput" multiple accept="image/*,video/*,audio/*,.txt,.md" hidden />
+    </header>
+
+    <main class="board" id="board"></main>
+
+    <div class="empty" id="empty">
+      <p class="big">drag references in.</p>
+      <p class="small">pull from the tray below, drop files from your computer, or paste. drag anything to move it, resize from the corner, double-click text to edit. ⌘c / ⌘v copies and pastes items.</p>
+    </div>
+
+    <aside class="tray" id="tray">
+      <div class="tray-head">
+        <span>references</span>
+        <span class="tray-count">{String(refs.length).padStart(2, "0")}</span>
+      </div>
+      <div class="tray-list" id="trayList">
+        {refs.length === 0 && <p class="tray-empty">add files to public/references to see them here.</p>}
+        {refs.map((r) => (
+          <button
+            class="thumb"
+            type="button"
+            draggable="true"
+            data-kind={r.kind}
+            data-src={r.src}
+            data-name={r.name}
+            title={r.path}
+          >
+            {r.kind === "image" && <img src={r.src} alt={r.name} loading="lazy" decoding="async" draggable="false" />}
+            {r.kind === "video" && <video src={r.src} muted playsinline preload="metadata" />}
+            {r.kind === "audio" && <span class="thumb-audio">♪<br />{r.name.replace(/\.[^.]+$/, "")}</span>}
+          </button>
+        ))}
+      </div>
+    </aside>
+
+    <div class="drop" id="drop" hidden>drop to add</div>
+    <div class="confirm" id="confirm" hidden>
+      <span>clear the whole board?</span>
+      <button type="button" id="confirmYes">clear</button>
+      <button type="button" id="confirmNo">cancel</button>
+    </div>
+    <div class="toast" id="toast" hidden><span id="toastMsg"></span><button type="button" id="toastUndo">undo</button></div>
+  </body>
+</html>
+
+<style is:global>
+  @font-face {
+    font-family: "Haas Grotesk Display";
+    src: url("/fonts/NHaasGroteskDSPro-65Md.otf") format("opentype");
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  :root {
+    --bg: #000;
+    --fg: #fff;
+    --dim: rgba(255, 255, 255, 0.55);
+    --line: rgba(255, 255, 255, 0.25);
+    --faint: rgba(255, 255, 255, 0.12);
+    --font: "Haas Grotesk Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --tray-h: 132px;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: var(--font);
+    font-weight: 500;
+    text-transform: lowercase;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  button { font: inherit; color: inherit; text-transform: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  [hidden] { display: none !important; }
+  :focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+  /* top bar */
+  .bar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100000;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: calc(18px + env(safe-area-inset-top)) 24px 18px;
+    background: linear-gradient(var(--bg) 55%, transparent);
+    pointer-events: none;
+  }
+  .bar > * { pointer-events: auto; }
+  .home { color: var(--fg); text-decoration: none; font-size: 28px; letter-spacing: -0.02em; line-height: 1; }
+  .home:hover { text-decoration: underline; text-underline-offset: 4px; }
+  .count { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; margin-right: auto; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { font-size: 13px; border: 1.5px solid var(--fg); border-radius: 999px; padding: 7px 14px; background: var(--bg); }
+  .btn:hover { background: var(--fg); color: var(--bg); }
+
+  /* board */
+  .board { position: relative; min-width: 100%; min-height: 100vh; padding-bottom: var(--tray-h); }
+  .empty {
+    position: fixed; left: 24px; right: 24px; bottom: calc(var(--tray-h) + 48px);
+    pointer-events: none; max-width: 1000px;
+  }
+  .empty .big { margin: 0; font-size: clamp(44px, 9vw, 140px); line-height: 0.9; letter-spacing: -0.045em; }
+  .empty .small { margin: 20px 0 0; font-size: 15px; line-height: 1.45; color: var(--dim); max-width: 46ch; }
+
+  /* items */
+  .item { position: absolute; touch-action: none; }
+  .item .tools {
+    position: absolute; left: 0; right: 0; bottom: 100%;
+    display: flex; align-items: center; gap: 6px; padding-bottom: 6px;
+    opacity: 0; transition: opacity 0.12s;
+  }
+  .item:hover .tools, .item.active .tools, .item:focus-within .tools { opacity: 1; }
+  .grip {
+    flex: 1; min-width: 0; height: 22px; padding-top: 4px; cursor: grab;
+    border-top: 1.5px solid var(--line); color: var(--dim); font-size: 11px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .grip:active { cursor: grabbing; }
+  .tbtn {
+    flex: none; width: 22px; height: 22px; display: grid; place-items: center;
+    border: 1.5px solid var(--line); border-radius: 50%; font-size: 10px; text-transform: none;
+  }
+  .tbtn:hover { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .resize { position: absolute; right: -8px; bottom: -8px; width: 18px; height: 18px; cursor: nwse-resize; opacity: 0; transition: opacity 0.12s; }
+  .resize::after { content: ""; position: absolute; right: 5px; bottom: 5px; width: 9px; height: 9px; border-right: 2px solid var(--fg); border-bottom: 2px solid var(--fg); }
+  .item:hover .resize, .item.active .resize { opacity: 1; }
+  @media (hover: none) { .item .tools, .resize { opacity: 1; } }
+
+  .item img, .item video { display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }
+  .item img { cursor: grab; }
+  .item.dragging { opacity: 0.85; }
+
+  .text {
+    outline: none; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.05; letter-spacing: -0.02em;
+    min-height: 1em; text-transform: none; cursor: grab; user-select: none; -webkit-user-select: none;
+  }
+  .item.dragging .text { cursor: grabbing; }
+  .item.editing .text { cursor: text; user-select: text; -webkit-user-select: text; box-shadow: 0 0 0 1.5px var(--line); }
+  .text:empty::before { content: "type something"; color: var(--dim); text-transform: lowercase; }
+  .item.selected { outline: 1.5px solid var(--fg); outline-offset: 6px; }
+  .item.editing { outline: none; }
+
+  .aud { border: 1.5px solid var(--fg); background: var(--bg); padding: 14px; display: flex; align-items: center; gap: 14px; }
+  .aud .play { flex: none; width: 44px; height: 44px; border-radius: 50%; background: var(--fg); color: var(--bg); display: grid; place-items: center; }
+  .aud .play svg { width: 16px; height: 16px; fill: currentColor; }
+  .aud .meta { flex: 1; min-width: 0; display: grid; gap: 8px; }
+  .aud .name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .aud .track { height: 14px; display: flex; align-items: center; cursor: pointer; }
+  .aud .rail { position: relative; width: 100%; height: 2px; background: var(--faint); }
+  .aud .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--fg); }
+  .aud .time { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .missing { border: 1.5px dashed var(--line); aspect-ratio: 4 / 3; display: grid; place-items: center; padding: 12px; text-align: center; font-size: 12px; color: var(--dim); }
+
+  /* tray */
+  .tray {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 99999;
+    height: calc(var(--tray-h) + env(safe-area-inset-bottom));
+    padding: 10px 24px calc(12px + env(safe-area-inset-bottom));
+    background: var(--bg); border-top: 1.5px solid var(--line);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .tray-head { display: flex; gap: 10px; font-size: 12px; }
+  .tray-count { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .tray-list { flex: 1; min-height: 0; display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+  .thumb { flex: none; height: 100%; aspect-ratio: 1; border: 1.5px solid transparent; overflow: hidden; cursor: grab; background: #111; }
+  .thumb:hover { border-color: var(--fg); }
+  .thumb img, .thumb video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+  .thumb-audio { display: grid; place-items: center; height: 100%; padding: 6px; font-size: 11px; line-height: 1.3; text-align: center; overflow: hidden; }
+  .tray-empty { margin: auto 0; color: var(--dim); font-size: 13px; }
+
+  /* overlays */
+  .drop {
+    position: fixed; inset: 12px; z-index: 100001; pointer-events: none;
+    border: 2px solid var(--fg); background: rgba(0, 0, 0, 0.55);
+    display: grid; place-items: center; font-size: clamp(28px, 6vw, 72px); letter-spacing: -0.03em;
+  }
+  .confirm, .toast {
+    position: fixed; left: 24px; bottom: calc(var(--tray-h) + 20px + env(safe-area-inset-bottom)); z-index: 100002;
+    display: flex; align-items: center; gap: 16px; max-width: calc(100vw - 48px);
+    background: var(--fg); color: var(--bg); padding: 10px 16px; font-size: 13px;
+  }
+  .confirm button, .toast button { text-decoration: underline; text-underline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<script>
+  const board = document.getElementById("board");
+  const emptyEl = document.getElementById("empty");
+  const countEl = document.getElementById("count");
+  const items = new Map();
+  const els = new Map();
+  const blobUrls = new Map();
+  const TEXT_SIZES = [18, 28, 44, 72, 120];
+  const DEFAULT_W = { image: 320, video: 420, audio: 320, text: 300 };
+  const LS_KEY = "alisokni-moodboard-v1";
+
+  /* ---------- storage: layout in localStorage, dropped files in IndexedDB ---------- */
+  const idb = (() => {
+    let p;
+    const open = () =>
+      p ||
+      (p = new Promise((res, rej) => {
+        const r = indexedDB.open("alisokni-moodboard", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("blobs");
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      }));
+    const tx = async (fn, rw) => {
+      const d = await open();
+      return new Promise((res, rej) => {
+        const t = d.transaction("blobs", rw ? "readwrite" : "readonly");
+        const req = fn(t.objectStore("blobs"));
+        t.oncomplete = () => res(req && req.result);
+        t.onerror = () => rej(t.error);
+      });
+    };
+    return {
+      get: (k) => tx((o) => o.get(k)).catch(() => undefined),
+      put: (k, v) => tx((o) => o.put(v, k), true).catch(() => {}),
+      del: (k) => tx((o) => o.delete(k), true).catch(() => {}),
+    };
+  })();
+
+  let saveTimer;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify([...items.values()]));
+      } catch (e) {}
+    }, 300);
+  }
+  function load() {
+    try {
+      return JSON.parse(localStorage.getItem(LS_KEY) || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function mediaUrl(it) {
+    return it.src || blobUrls.get(it.id) || null;
+  }
+
+  /* ---------- rendering ---------- */
+  const fmt = (s) => (!isFinite(s) ? "0:00" : Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0"));
+  const ICON_PLAY = '<svg viewBox="0 0 16 16"><path d="M3 1.5v13l11-6.5z"/></svg>';
+  const ICON_PAUSE = '<svg viewBox="0 0 16 16"><path d="M2.5 1.5h4v13h-4zM9.5 1.5h4v13h-4z"/></svg>';
+
+  function buildBody(it, el) {
+    const body = el.querySelector(".body");
+    body.textContent = "";
+
+    if (it.kind === "text") {
+      const t = document.createElement("div");
+      t.className = "text";
+      t.dataset.drag = "1";
+      t.textContent = it.text || "";
+      t.style.fontSize = (it.size || TEXT_SIZES[1]) + "px";
+      t.addEventListener("input", () => { it.text = t.innerText; save(); });
+      t.addEventListener("blur", () => stopEditing(it.id));
+      t.addEventListener("paste", (e) => {
+        if (editingId !== it.id || e.clipboardData.files.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+      });
+      t.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); t.blur(); } });
+      body.appendChild(t);
+      return;
+    }
+
+    const url = mediaUrl(it);
+    if (!url) {
+      body.innerHTML = '<div class="missing">file not found</div>';
+      return;
+    }
+
+    if (it.kind === "image") {
+      const img = new Image();
+      img.src = url;
+      img.alt = it.name || "";
+      img.draggable = false;
+      img.dataset.drag = "1";
+      img.onerror = () => { body.innerHTML = '<div class="missing">file not found</div>'; };
+      body.appendChild(img);
+    } else if (it.kind === "video") {
+      const v = document.createElement("video");
+      v.src = url;
+      v.controls = true;
+      v.playsInline = true;
+      v.loop = true;
+      v.preload = "metadata";
+      body.appendChild(v);
+    } else if (it.kind === "audio") {
+      const wrap = document.createElement("div");
+      wrap.className = "aud";
+      wrap.innerHTML =
+        '<button class="play" type="button" aria-label="play">' + ICON_PLAY +
+        '</button><div class="meta"><div class="name"></div><div class="track"><div class="rail"><div class="fill"></div></div></div><div class="time">0:00 / 0:00</div></div>';
+      wrap.querySelector(".name").textContent = (it.name || "audio").replace(/\.[^.]+$/, "");
+      const a = document.createElement("audio");
+      a.src = url;
+      a.preload = "metadata";
+      const btn = wrap.querySelector(".play");
+      const fill = wrap.querySelector(".fill");
+      const time = wrap.querySelector(".time");
+      const track = wrap.querySelector(".track");
+      const upd = () => {
+        fill.style.width = (a.duration ? (a.currentTime / a.duration) * 100 : 0) + "%";
+        time.textContent = fmt(a.currentTime) + " / " + fmt(a.duration);
+      };
+      a.addEventListener("timeupdate", upd);
+      a.addEventListener("loadedmetadata", upd);
+      a.addEventListener("play", () => { btn.innerHTML = ICON_PAUSE; });
+      a.addEventListener("pause", () => { btn.innerHTML = ICON_PLAY; });
+      a.addEventListener("error", () => { time.textContent = "can't play this file"; });
+      btn.addEventListener("click", () => { a.paused ? a.play().catch(() => {}) : a.pause(); });
+      track.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        const seek = (ev) => {
+          const r = track.getBoundingClientRect();
+          if (a.duration) a.currentTime = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * a.duration;
+        };
+        seek(e);
+        const up = () => { removeEventListener("pointermove", seek); removeEventListener("pointerup", up); };
+        addEventListener("pointermove", seek);
+        addEventListener("pointerup", up);
+      });
+      wrap.appendChild(a);
+      body.appendChild(wrap);
+    }
+  }
+
+  function renderItem(it, rebuild) {
+    let el = els.get(it.id);
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "item";
+      el.dataset.id = it.id;
+      el.innerHTML = '<div class="tools"><div class="grip" data-drag="1"></div></div><div class="body"></div><div class="resize" data-resize="1"></div>';
+      const tools = el.querySelector(".tools");
+      if (it.kind === "text") {
+        const s = document.createElement("button");
+        s.className = "tbtn";
+        s.type = "button";
+        s.textContent = "Aa";
+        s.title = "text size";
+        s.addEventListener("click", () => {
+          const i = TEXT_SIZES.indexOf(it.size || TEXT_SIZES[1]);
+          it.size = TEXT_SIZES[(i + 1) % TEXT_SIZES.length];
+          el.querySelector(".text").style.fontSize = it.size + "px";
+          save();
+          sizeBoard();
+        });
+        tools.appendChild(s);
+      }
+      const del = document.createElement("button");
+      del.className = "tbtn";
+      del.type = "button";
+      del.textContent = "✕";
+      del.title = "remove";
+      del.addEventListener("click", () => deleteItem(it.id));
+      tools.appendChild(del);
+      board.appendChild(el);
+      els.set(it.id, el);
+      rebuild = true;
+    }
+    el.querySelector(".grip").textContent = it.kind === "text" ? "text" : it.name || it.kind;
+    el.style.left = it.x + "px";
+    el.style.top = it.y + "px";
+    el.style.width = it.w + "px";
+    el.style.zIndex = it.z || 1;
+    if (rebuild) buildBody(it, el);
+  }
+
+  /* ---------- text editing: double-click to edit, otherwise drag ---------- */
+  let editingId = null;
+  function startEditing(id, clientX, clientY) {
+    const el = els.get(id);
+    const t = el && el.querySelector(".text");
+    if (!t) return;
+    if (editingId && editingId !== id) stopEditing(editingId);
+    editingId = id;
+    el.classList.add("editing");
+    try { t.contentEditable = "plaintext-only"; } catch (e) {}
+    if (t.contentEditable !== "plaintext-only") t.contentEditable = "true";
+    t.focus();
+    const sel = getSelection();
+    let range = null;
+    if (clientX != null && document.caretRangeFromPoint) range = document.caretRangeFromPoint(clientX, clientY);
+    else if (clientX != null && document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(clientX, clientY);
+      if (pos) { range = document.createRange(); range.setStart(pos.offsetNode, pos.offset); }
+    }
+    if (!range || !t.contains(range.startContainer)) {
+      range = document.createRange();
+      range.selectNodeContents(t);
+      range.collapse(false);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  function stopEditing(id) {
+    if (editingId !== id) return;
+    editingId = null;
+    const el = els.get(id);
+    const t = el && el.querySelector(".text");
+    if (!t) return;
+    t.contentEditable = "false";
+    el.classList.remove("editing");
+    getSelection().removeAllRanges();
+    const it = items.get(id);
+    if (it && !(it.text || "").trim()) {
+      items.delete(id); el.remove(); els.delete(id);
+      if (selectedId === id) selectedId = null;
+      refreshChrome(); save();
+    }
+  }
+
+  /* ---------- selection ---------- */
+  let selectedId = null;
+  function select(id) {
+    if (selectedId && selectedId !== id) els.get(selectedId)?.classList.remove("selected");
+    selectedId = id;
+    if (id) els.get(id)?.classList.add("selected");
+  }
+
+  function refreshChrome() {
+    emptyEl.hidden = items.size > 0;
+    countEl.textContent = items.size ? String(items.size).padStart(2, "0") : "";
+    sizeBoard();
+  }
+  function sizeBoard() {
+    let w = 0, h = 0;
+    for (const el of els.values()) {
+      w = Math.max(w, el.offsetLeft + el.offsetWidth);
+      h = Math.max(h, el.offsetTop + el.offsetHeight);
+    }
+    board.style.width = Math.max(innerWidth, w + 240) + "px";
+    board.style.height = Math.max(innerHeight, h + 360) + "px";
+  }
+
+  /* ---------- adding ---------- */
+  const maxZ = () => { let m = 0; for (const it of items.values()) m = Math.max(m, it.z || 0); return m; };
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+  function kindOf(f) {
+    const t = f.type || "";
+    if (t.startsWith("image/")) return "image";
+    if (t.startsWith("video/")) return "video";
+    if (t.startsWith("audio/")) return "audio";
+    if (t.startsWith("text/") || /\.(txt|md)$/i.test(f.name)) return "text";
+    if (/\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(f.name)) return "audio";
+    if (/\.(mp4|mov|webm|m4v)$/i.test(f.name)) return "video";
+    if (/\.(png|jpe?g|gif|webp|avif|svg)$/i.test(f.name)) return "image";
+    return null;
+  }
+
+  function addItem(it) {
+    it.id = it.id || uid();
+    it.z = maxZ() + 1;
+    it.x = Math.round(it.x);
+    it.y = Math.round(it.y);
+    it.w = it.w || DEFAULT_W[it.kind];
+    items.set(it.id, it);
+    renderItem(it);
+    refreshChrome();
+    save();
+    return it;
+  }
+
+  function addText(x, y, text) {
+    const it = addItem({ kind: "text", x, y, text: text || "", size: TEXT_SIZES[1] });
+    select(it.id);
+    if (!text) setTimeout(() => startEditing(it.id), 30);
+  }
+
+  function addReference(ref, x, y) {
+    addItem({ kind: ref.kind, src: ref.src, name: ref.name, x, y });
+  }
+
+  async function addFile(file, x, y) {
+    const kind = kindOf(file);
+    if (!kind) return;
+    if (kind === "text") { addText(x, y, (await file.text()).slice(0, 20000)); return; }
+    const id = uid();
+    blobUrls.set(id, URL.createObjectURL(file));
+    await idb.put(id, file);
+    addItem({ id, kind, name: file.name, local: true, x, y });
+  }
+
+  function addFiles(files, x, y) {
+    files.forEach((f, i) => addFile(f, x + i * 36, y + i * 36));
+  }
+
+  /* ---------- removing (with undo) ---------- */
+  const toast = document.getElementById("toast");
+  const toastMsg = document.getElementById("toastMsg");
+  let undo = null;
+
+  function finalize(list) {
+    list.forEach((it) => {
+      if (it.local) idb.del(it.id);
+      if (blobUrls.has(it.id)) { URL.revokeObjectURL(blobUrls.get(it.id)); blobUrls.delete(it.id); }
+    });
+  }
+  function removeMany(list, msg) {
+    if (undo) { clearTimeout(undo.t); finalize(undo.list); }
+    list.forEach((it) => {
+      if (editingId === it.id) editingId = null;
+      if (selectedId === it.id) selectedId = null;
+      items.delete(it.id); els.get(it.id)?.remove(); els.delete(it.id);
+    });
+    refreshChrome();
+    save();
+    toastMsg.textContent = msg;
+    toast.hidden = false;
+    undo = { list, t: setTimeout(() => { finalize(list); undo = null; toast.hidden = true; }, 6000) };
+  }
+  function deleteItem(id) {
+    const it = items.get(id);
+    if (it) removeMany([it], "removed " + (it.kind === "text" ? "text" : it.name || it.kind));
+  }
+  document.getElementById("toastUndo").addEventListener("click", () => {
+    if (!undo) return;
+    clearTimeout(undo.t);
+    undo.list.forEach((it) => { items.set(it.id, it); renderItem(it); });
+    undo = null;
+    toast.hidden = true;
+    refreshChrome();
+    save();
+  });
+
+  const confirmEl = document.getElementById("confirm");
+  document.getElementById("clearBoard").addEventListener("click", () => { if (items.size) confirmEl.hidden = false; });
+  document.getElementById("confirmNo").addEventListener("click", () => { confirmEl.hidden = true; });
+  document.getElementById("confirmYes").addEventListener("click", () => {
+    confirmEl.hidden = true;
+    removeMany([...items.values()], "board cleared");
+  });
+
+  /* ---------- move / resize ---------- */
+  let op = null;
+  let lastTap = { id: null, t: 0, x: 0, y: 0 };
+  board.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".item");
+    if (!el) return;
+    const it = items.get(el.dataset.id);
+    if (!it) return;
+    document.querySelectorAll(".item.active").forEach((n) => n !== el && n.classList.remove("active"));
+    el.classList.add("active");
+    select(it.id);
+    if (editingId && editingId !== it.id) {
+      const prev = els.get(editingId)?.querySelector(".text");
+      stopEditing(editingId);
+      prev?.blur();
+    }
+    if (it.z !== maxZ()) { it.z = maxZ() + 1; el.style.zIndex = it.z; save(); }
+
+    // while editing, clicks inside the text place the cursor instead of dragging
+    if (editingId === it.id && e.target.closest(".text")) return;
+
+    // double-click (or double-tap) on text starts editing
+    const textEl = e.target.closest(".text");
+    if (textEl) {
+      const now = performance.now();
+      const isDouble = lastTap.id === it.id && now - lastTap.t < 400 && Math.abs(e.clientX - lastTap.x) < 8 && Math.abs(e.clientY - lastTap.y) < 8;
+      lastTap = { id: it.id, t: now, x: e.clientX, y: e.clientY };
+      if (isDouble) {
+        e.preventDefault();
+        lastTap.id = null;
+        startEditing(it.id, e.clientX, e.clientY);
+        return;
+      }
+    }
+
+    const isResize = e.target.dataset.resize;
+    const isDrag = e.target.closest("[data-drag]");
+    if (!isResize && !isDrag) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    op = { el, it, type: isResize ? "resize" : "drag", sx: e.clientX, sy: e.clientY, ox: it.x, oy: it.y, ow: it.w };
+    el.classList.add("dragging");
+  });
+  board.addEventListener("pointermove", (e) => {
+    if (!op) return;
+    const dx = e.clientX - op.sx;
+    const dy = e.clientY - op.sy;
+    if (op.type === "drag") {
+      op.it.x = Math.max(0, Math.round(op.ox + dx));
+      op.it.y = Math.max(0, Math.round(op.oy + dy));
+      op.el.style.left = op.it.x + "px";
+      op.el.style.top = op.it.y + "px";
+    } else {
+      op.it.w = Math.max(120, Math.round(op.ow + dx));
+      op.el.style.width = op.it.w + "px";
+    }
+  });
+  const endOp = () => {
+    if (!op) return;
+    op.el.classList.remove("dragging");
+    op = null;
+    save();
+    sizeBoard();
+  };
+  board.addEventListener("pointerup", endOp);
+  board.addEventListener("pointercancel", endOp);
+  document.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".item") || e.target.closest(".bar") || e.target.closest(".toast") || e.target.closest(".confirm")) return;
+    document.querySelectorAll(".item.active").forEach((n) => n.classList.remove("active"));
+    select(null);
+  });
+
+  /* ---------- copy / cut / paste / delete items ---------- */
+  const ITEM_TYPE = "application/x-alisokni-item";
+  let clip = null;      // last copied items (kept in the page)
+  let pasteCount = 0;
+
+  const typingInField = () => {
+    const a = document.activeElement;
+    return !!a && (a.isContentEditable || a.tagName === "INPUT" || a.tagName === "TEXTAREA");
+  };
+
+  function copySelected(e) {
+    const it = selectedId && items.get(selectedId);
+    if (!it || typingInField()) return false;
+    const copy = JSON.parse(JSON.stringify(it));
+    const label = it.kind === "text" ? it.text || "" : it.name || it.kind;
+    clip = { item: copy, label };
+    pasteCount = 0;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", label);
+    try { e.clipboardData.setData(ITEM_TYPE, JSON.stringify(copy)); } catch (err) {}
+    return true;
+  }
+
+  document.addEventListener("copy", (e) => { copySelected(e); });
+  document.addEventListener("cut", (e) => {
+    const id = selectedId;
+    if (copySelected(e)) {
+      const it = items.get(id);
+      // keep a cut file's saved copy alive so it can still be pasted
+      if (it) { items.delete(id); els.get(id)?.remove(); els.delete(id); selectedId = null; refreshChrome(); save(); }
+    }
+  });
+
+  async function pasteItem(src) {
+    pasteCount++;
+    const it = JSON.parse(JSON.stringify(src));
+    it.id = uid();
+    it.x = (src.x || 0) + 28 * pasteCount;
+    it.y = (src.y || 0) + 28 * pasteCount;
+    if (it.local) {
+      const blob = await idb.get(src.id);
+      if (!blob) return;
+      await idb.put(it.id, blob);
+      blobUrls.set(it.id, URL.createObjectURL(blob));
+    }
+    addItem(it);
+    select(it.id);
+  }
+
+  addEventListener("keydown", (e) => {
+    if (typingInField()) return;
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
+      e.preventDefault();
+      deleteItem(selectedId);
+    } else if (e.key === "Enter" && selectedId && items.get(selectedId)?.kind === "text") {
+      e.preventDefault();
+      startEditing(selectedId);
+    }
+  });
+
+  /* ---------- tray: drag a reference onto the board, or tap to add ---------- */
+  const REF_TYPE = "application/x-alisokni-ref";
+  const refOf = (btn) => ({ kind: btn.dataset.kind, src: btn.dataset.src, name: btn.dataset.name });
+  function viewCenter() {
+    const r = board.getBoundingClientRect();
+    return {
+      x: Math.max(24, innerWidth / 2 - r.left - 160 + (Math.random() * 120 - 60)),
+      y: Math.max(90, (innerHeight - 132) / 2 - r.top - 120 + (Math.random() * 80 - 40)),
+    };
+  }
+  document.querySelectorAll(".thumb").forEach((btn) => {
+    btn.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData(REF_TYPE, JSON.stringify(refOf(btn)));
+      e.dataTransfer.effectAllowed = "copy";
+    });
+    btn.addEventListener("click", () => { const c = viewCenter(); addReference(refOf(btn), c.x, c.y); });
+  });
+
+  /* ---------- dropping files and pasting ---------- */
+  const dropEl = document.getElementById("drop");
+  let depth = 0;
+  const isFileDrag = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+  const isRefDrag = (e) => e.dataTransfer && [...e.dataTransfer.types].includes(REF_TYPE);
+  addEventListener("dragenter", (e) => {
+    if (!isFileDrag(e) && !isRefDrag(e)) return;
+    e.preventDefault();
+    depth++;
+    if (isFileDrag(e)) dropEl.hidden = false;
+  });
+  addEventListener("dragover", (e) => {
+    if (!isFileDrag(e) && !isRefDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) dropEl.hidden = true; });
+  addEventListener("drop", (e) => {
+    e.preventDefault();
+    depth = 0;
+    dropEl.hidden = true;
+    if (e.target.closest && e.target.closest(".tray")) return;
+    const r = board.getBoundingClientRect();
+    const x = Math.max(0, e.clientX - r.left - 60);
+    const y = Math.max(70, e.clientY - r.top - 40);
+    const ref = e.dataTransfer.getData(REF_TYPE);
+    if (ref) { addReference(JSON.parse(ref), x, y); return; }
+    if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files], x, y);
+  });
+
+  addEventListener("paste", (e) => {
+    const inText = typingInField();
+    const c = viewCenter();
+
+    // pasting an element copied from this board
+    if (!inText) {
+      let src = null;
+      try { const raw = e.clipboardData.getData(ITEM_TYPE); if (raw) src = JSON.parse(raw); } catch (err) {}
+      if (!src && clip && e.clipboardData.getData("text/plain") === clip.label && !e.clipboardData.files.length) src = clip.item;
+      if (src) { e.preventDefault(); pasteItem(src); return; }
+    }
+
+    if (e.clipboardData.files.length) {
+      e.preventDefault();
+      addFiles([...e.clipboardData.files], c.x, c.y);
+    } else if (!inText) {
+      const t = e.clipboardData.getData("text/plain");
+      if (t) { e.preventDefault(); addText(c.x, c.y, t); }
+    }
+  });
+
+  document.getElementById("addText").addEventListener("click", () => { const c = viewCenter(); addText(c.x, c.y, ""); });
+  const fileInput = document.getElementById("fileInput");
+  document.getElementById("addFile").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const c = viewCenter();
+    addFiles([...fileInput.files], c.x, c.y);
+    fileInput.value = "";
+  });
+  addEventListener("resize", sizeBoard);
+
+  /* ---------- start ---------- */
+  (async () => {
+    const saved = load();
+    for (const it of saved) {
+      if (it.local) {
+        const b = await idb.get(it.id);
+        if (b) blobUrls.set(it.id, URL.createObjectURL(b));
+      }
+      items.set(it.id, it);
+      renderItem(it);
+    }
+    refreshChrome();
+  })();
+</script>
