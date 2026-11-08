@@ -16,14 +16,27 @@
       <source src="/videos/background.mp4" type="video/mp4" />
     </video>
 
-    <img class="center" src="/references/alisokni27/18183270571393790.jpg" alt="" draggable="false" />
+    <div class="grid">
+      <img src="/references/alisokni27/18152430997489663.jpg" alt="" draggable="false" />
+      <img src="/references/alisokni27/17942362896266370.jpg" alt="" draggable="false" />
+      <img src="/references/alisokni27/17967882831094821.jpg" alt="" draggable="false" />
+    </div>
+
+    <div class="top">
+      <div class="edu">
+        <span>ma candidate, the new school for social research</span>
+        <span>ba, boston university</span>
+      </div>
+      <img class="center" src="/references/alisokni27/18183270571393790.jpg" alt="" draggable="false" />
+    </div>
 
     <div class="corner">
-      <span class="label">artist</span>
+      <span class="label">researcher</span>
       <h1 class="name">ali</h1>
     </div>
 
     <div class="corner-left">
+      <a class="name link" href="https://ragathin.com">ragathin</a>
       <a class="name link" href="https://paradisiacal.space">paradisiacal</a>
     </div>
   </body>
@@ -44,6 +57,7 @@
     height: 100%;
     background: #000;
     overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .bg {
@@ -55,17 +69,76 @@
     z-index: 0;
   }
 
-  .center {
+  /* top-left: three images, seamless, no gaps or borders */
+  .grid {
+    --tile: clamp(64px, 9vw, 130px);
     position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    top: calc(20px + env(safe-area-inset-top));
+    left: calc(24px + env(safe-area-inset-left));
     z-index: 1;
+    display: grid;
+    grid-template-columns: repeat(3, var(--tile));
+    gap: 0;
+  }
+
+  .grid img {
+    display: block;
+    width: var(--tile);
+    height: var(--tile);
+    object-fit: cover;
+    border: 0;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  /* on phones: stack them vertically */
+  @media (max-width: 640px) {
+    .grid {
+      --tile: 72px;
+      grid-template-columns: var(--tile);
+    }
+  }
+
+  /* top-right: blue text block + image */
+  .top {
+    position: fixed;
+    top: calc(20px + env(safe-area-inset-top));
+    right: calc(24px + env(safe-area-inset-right));
+    z-index: 1;
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  /* royal blue block behind the text: as wide as the text, as tall as the image */
+  .edu {
+    background: #4169e1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    max-width: 40vw;
+    text-align: right;
+    font-family: "Haas Grotesk Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-weight: 500;
+    font-size: clamp(12px, 1.1vw, 15px);
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    color: #fff;
+    text-transform: lowercase;
+  }
+
+  .edu span {
+    opacity: 0.75;
+  }
+
+  .center {
+    align-self: flex-start;
     display: block;
     width: auto;
     height: auto;
-    max-width: min(80vw, 520px);
-    max-height: 60vh;
+    max-width: min(30vw, 200px);
+    max-height: 30vh;
     object-fit: contain;
     user-select: none;
     -webkit-user-drag: none;
@@ -91,6 +164,10 @@
     left: calc(24px + env(safe-area-inset-left));
     bottom: calc(20px + env(safe-area-inset-bottom));
     z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
     font-family: "Haas Grotesk Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-weight: 500;
     color: #fff;
@@ -99,16 +176,23 @@
     will-change: transform;
   }
 
+  /* links: plain white text, no underline, box, highlight or visited color */
   .link,
   .link:link,
   .link:visited,
   .link:hover,
   .link:focus,
+  .link:focus-visible,
   .link:active {
     display: block;
     color: #fff;
+    background: none;
     text-decoration: none !important;
     outline: none;
+    box-shadow: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
   }
 
